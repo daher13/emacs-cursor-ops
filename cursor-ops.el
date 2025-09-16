@@ -1,95 +1,152 @@
-(require 'cl-lib)
+;;; cursor-ops.el --- Custom cursor movement and deletion operations -*- lexical-binding: t; -*-
 
-(cl-defun is-alnum (ch)
-  (and ch (string-match "[[:alnum:]]" (string ch))))
+;; Author: Guilherme Daher
+;; Version: 0.2
+;; Package-Requires: ((emacs "24.4"))
+;; Keywords: editing, navigation
+;; URL: https://github.com/daher13/emacs-cursor-ops
 
-(cl-defun is-special-char (ch)
-  (and ch (string-match "[^[:alnum:][:space:]]" (string ch))))
+;;; Commentary:
+;;
+;; This package provides custom cursor movement and deletion operations,
+;; treating alphanumeric sequences, spaces, and special characters as
+;; distinct "units". It introduces movement and deletion commands that
+;; operate on these units, and provides a minor mode to enable keybindings.
+;;
+;; Unlike `forward-word`/`backward-word`, this approach separates
+;; alphanumeric, whitespace, and punctuation sequences.
+;;
+;; Usage:
+;;   (cursor-ops-mode 1)
 
-(cl-defun is-space (ch)
-  (and ch (string-match "[[:space:]]" (string ch))))
+;;; Code:
 
-(cl-defun cursor-operation ()
-  (if (check-line-limit)
-      (operation)
-    (if (and (or (is-special-char (get-char)) (is-space (get-char))) (is-alnum (get-char2))) ;; special char or space followed by alnum
-	(progn
-	  (operation)
-	  (while (and (is-alnum (get-char)) (not (check-line-limit)))
-	    (operation)))
-      (if (and (or (is-alnum (get-char)) (is-space (get-char))) (is-special-char (get-char2))) ;; alnum or space followed by special char
-	  (progn
-	    (operation)
-	    (while (and (is-special-char (get-char)) (not (check-line-limit)))
-	      (operation)))
-	(if (is-special-char (get-char)) ;; special char sequence
-	    (while (and (is-special-char (get-char)) (not (check-line-limit)))
-	      (operation))
-	  (if (is-alnum (get-char)) ;; alnum sequence
-	      (while (is-alnum (get-char))
-		(operation))
-	    (if (is-space (get-char)) ;; space sequence
-		(while (is-space (get-char))
-		  (operation)))))))))
+(defun cursor-ops--alnum-p (ch)
+  "Return non-nil if character CH is alphanumeric."
+  (and ch (string-match-p "[[:alnum:]]" (string ch))))
 
+(defun cursor-ops--special-char-p (ch)
+  "Return non-nil if character CH is a non-space, non-alphanumeric char."
+  (and ch (string-match-p "[^[:alnum:][:space:]]" (string ch))))
 
-(defun cursor-ops--backward-expr (&optional arg)
-  "Backward move"
+(defun cursor-ops--space-p (ch)
+  "Return non-nil if character CH is whitespace."
+  (and ch (string-match-p "[[:space:]]" (string ch))))
+
+(defun cursor-ops--operation (check-limit-fn get-char-fn get-char2-fn op-fn)
+  "Generic cursor operation dispatcher.
+
+CHECK-LIMIT-FN is called to test line limits.
+GET-CHAR-FN returns the current char at point (or before).
+GET-CHAR2-FN returns the next char in direction of motion.
+OP-FN performs the actual operation (move/delete)."
+  (cond
+   ((funcall check-limit-fn)
+    (funcall op-fn))
+   ((and (or (cursor-ops--special-char-p (funcall get-char-fn))
+             (cursor-ops--space-p (funcall get-char-fn)))
+         (cursor-ops--alnum-p (funcall get-char2-fn)))
+    (funcall op-fn)
+    (while (and (cursor-ops--alnum-p (funcall get-char-fn))
+                (not (funcall check-limit-fn)))
+      (funcall op-fn)))
+   ((and (or (cursor-ops--alnum-p (funcall get-char-fn))
+             (cursor-ops--space-p (funcall get-char-fn)))
+         (cursor-ops--special-char-p (funcall get-char2-fn)))
+    (funcall op-fn)
+    (while (and (cursor-ops--special-char-p (funcall get-char-fn))
+                (not (funcall check-limit-fn)))
+      (funcall op-fn)))
+   ((cursor-ops--special-char-p (funcall get-char-fn))
+    (while (and (cursor-ops--special-char-p (funcall get-char-fn))
+                (not (funcall check-limit-fn)))
+      (funcall op-fn)))
+   ((cursor-ops--alnum-p (funcall get-char-fn))
+    (while (and (cursor-ops--alnum-p (funcall get-char-fn))
+                (not (funcall check-limit-fn)))
+      (funcall op-fn)))
+   ((cursor-ops--space-p (funcall get-char-fn))
+    (while (and (cursor-ops--space-p (funcall get-char-fn))
+                (not (funcall check-limit-fn)))
+      (funcall op-fn)))))
+
+;;;###autoload
+(defun cursor-ops-backward-unit (&optional arg)
+  "Move backward by custom unit ARG times."
   (interactive "^p")
-  (defun check-line-limit () (bolp))
-  (defun get-char () (char-before))
-  (defun get-char2 () (char-before (- (point) 1)))
-  (defun operation () (backward-char))
-  (cursor-operation))
+  (dotimes (_ (or arg 1))
+    (cursor-ops--operation
+     #'bolp
+     #'char-before
+     (lambda () (char-before (1- (point))))
+     (lambda () (backward-char)))))
 
-(defun cursor-ops--forward-expr (&optional arg)
-  "Forward move"
+;;;###autoload
+(defun cursor-ops-forward-unit (&optional arg)
+  "Move forward by custom unit ARG times."
   (interactive "^p")
-  (defun check-line-limit () (eolp))
-  (defun get-char () (char-after))
-  (defun get-char2 () (char-after (+ (point) 1)))
-  (defun operation () (forward-char))
-  (cursor-operation))
+  (dotimes (_ (or arg 1))
+    (cursor-ops--operation
+     #'eolp
+     #'char-after
+     (lambda () (char-after (1+ (point))))
+     (lambda () (forward-char)))))
 
-(defun cursor-ops--backward-delete-expr ()
-  "Backward delete"
-  (interactive)
-  (defun check-line-limit () (bolp))
-  (defun get-char () (char-before))
-  (defun get-char2 () (char-before (- (point) 1)))
-  (defun operation () (backward-delete-char 1))
-  (cursor-operation))
+;;;###autoload
+(defun cursor-ops-backward-delete-unit (&optional arg)
+  "Delete backward by custom unit ARG times."
+  (interactive "p")
+  (dotimes (_ (or arg 1))
+    (cursor-ops--operation
+     #'bolp
+     #'char-before
+     (lambda () (char-before (1- (point))))
+     (lambda () (delete-char -1)))))
 
-(defun cursor-ops--forward-delete-expr ()
-  "Forward delete"
-  (interactive)
-  (defun check-line-limit () (eolp))
-  (defun get-char () (char-after))
-  (defun get-char2 () (char-after (+ (point) 1)))
-  (defun operation () (delete-char 1))
-  (cursor-operation))
+;;;###autoload
+(defun cursor-ops-forward-delete-unit (&optional arg)
+  "Delete forward by custom unit ARG times."
+  (interactive "p")
+  (dotimes (_ (or arg 1))
+    (cursor-ops--operation
+     #'eolp
+     #'char-after
+     (lambda () (char-after (1+ (point))))
+     (lambda () (delete-char 1)))))
 
-(defun cursor-ops--delete-lines ()
+;;;###autoload
+(defun cursor-ops-delete-lines ()
+  "Delete the current line(s)."
   (interactive)
   (if (use-region-p)
       (progn
-        (backward-delete-char 1)
-        (if (not (eolp))
-            (progn
-              (set-mark (point))
-              (end-of-line)
-              (backward-delete-char 1))))
-    (progn
-      (setq position (current-column))
+        (delete-char -1)
+        (unless (eolp)
+          (set-mark (point))
+          (end-of-line)
+          (delete-char -1)))
+    (let ((position (current-column)))
       (delete-line)
       (line-move-to-column position))))
 
+;; Define a minor mode with its own keymap
+(defvar cursor-ops-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map [remap left-word] #'cursor-ops-backward-unit)
+    (define-key map [remap right-word] #'cursor-ops-forward-unit)
+    (define-key map [remap backward-kill-word] #'cursor-ops-backward-delete-unit)
+    (define-key map [remap kill-word] #'cursor-ops-forward-delete-unit)
+    (define-key map (kbd "C-S-<backspace>") #'cursor-ops-delete-lines)
+    (define-key map (kbd "<home>") #'beginning-of-line-text)
+    map)
+  "Keymap for `cursor-ops-mode'.")
 
-(global-set-key [remap left-word] 'cursor-ops--backward-expr)
-(global-set-key [remap right-word] 'cursor-ops--forward-expr)
-(global-set-key [remap backward-kill-word] 'cursor-ops--backward-delete-expr)
-(global-set-key [remap kill-word] 'cursor-ops--forward-delete-expr)
-(global-set-key (kbd "C-S-<backspace>") 'cursor-ops--delete-lines)
-(global-set-key (kbd "<home>") 'beginning-of-line-text)
+;;;###autoload
+(define-minor-mode cursor-ops-mode
+  "Minor mode for custom cursor operations."
+  :lighter " C-Ops"
+  :keymap cursor-ops-mode-map)
 
 (provide 'cursor-ops)
+
+;;; cursor-ops.el ends here
