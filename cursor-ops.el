@@ -141,11 +141,37 @@ OP-FN performs the actual operation (move/delete)."
     map)
   "Keymap for `cursor-ops-mode'.")
 
+(define-minor-mode alnum-word-mode
+  "Toggle the interpretation of words as alpha-numerical sequences."
+  :lighter " FWM"
+  (setq-local
+   find-word-boundary-function-table
+   (let ((tab (make-char-table nil)))
+     (when alnum-word-mode
+       (let ((fn (lambda (pos limit)
+                   (save-excursion
+                     (goto-char pos)
+                     (funcall (if (< pos limit)
+				  #'skip-chars-forward
+				#'skip-chars-backward)
+                              "[:alnum:]" limit)
+                     (point))))
+             (sym (make-symbol "fn")))
+         (fset sym fn)
+         (set-char-table-range tab t sym)))
+     tab)))
+
+
 ;;;###autoload
 (define-minor-mode cursor-ops-mode
   "Minor mode for custom cursor operations."
   :lighter " C-Ops"
   :keymap cursor-ops-mode-map)
+
+;;;###autoload
+(define-globalized-minor-mode global-cursor-ops-mode
+  cursor-ops-mode
+  (lambda () (cursor-ops-mode 1)))
 
 (provide 'cursor-ops)
 

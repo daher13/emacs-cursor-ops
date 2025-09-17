@@ -41,7 +41,9 @@
 
 3. Load the plugin
 
-(require 'cursor-ops)
+```
+(global-cursor-ops-mode 1)
+```
 
 ---
 
